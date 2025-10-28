@@ -1,4 +1,6 @@
-const POSE_CONNECTIONS = [
+import type { Landmarks2D, Point2D } from './types';
+
+const POSE_CONNECTIONS: Array<[number, number]> = [
   [11, 12], [11, 23], [12, 24], [23, 24],
   [11, 13], [13, 15],
   [12, 14], [14, 16],
@@ -6,7 +8,7 @@ const POSE_CONNECTIONS = [
   [24, 26], [26, 28], [28, 32]
 ];
 
-export function drawPose(ctx, landmarks, opts = {}) {
+export function drawPose(ctx: CanvasRenderingContext2D, landmarks: Landmarks2D, opts: { color?: string; pointColor?: string } = {}) {
   if (!landmarks || !landmarks[0]) return;
   const lm = landmarks[0];
   const w = ctx.canvas.width;
@@ -36,7 +38,7 @@ export function drawPose(ctx, landmarks, opts = {}) {
   ctx.restore();
 }
 
-function speedToColor(speedPxPerSec) {
+function speedToColor(speedPxPerSec: number): string {
   const s = Math.max(0, Math.min(1, speedPxPerSec / 1500));
   const r = Math.round(255 * s);
   const g = Math.round(160 * (1 - s) + 40 * s);
@@ -44,7 +46,7 @@ function speedToColor(speedPxPerSec) {
   return `rgb(${r},${g},${b})`;
 }
 
-export function drawRing(ctx, x, y, { radius = 14, color = '#ffd166', width = 3 } = {}) {
+export function drawRing(ctx: CanvasRenderingContext2D, x: number, y: number, { radius = 14, color = '#ffd166', width = 3 }: { radius?: number; color?: string; width?: number } = {}) {
   ctx.save();
   ctx.lineWidth = width;
   ctx.strokeStyle = color;
@@ -59,7 +61,14 @@ export function drawRing(ctx, x, y, { radius = 14, color = '#ffd166', width = 3 
   ctx.restore();
 }
 
-export function drawArrow(ctx, x, y, vx, vy, { color = '#4da3ff', scale = 0.05, maxLen = 120, width = 4 } = {}) {
+export function drawArrow(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  vx: number,
+  vy: number,
+  { color = '#4da3ff', scale = 0.05, maxLen = 120, width = 4 }: { color?: string; scale?: number; maxLen?: number; width?: number } = {}
+) {
   const len = Math.hypot(vx, vy);
   if (!isFinite(len) || len <= 0) return;
   const dirx = vx / len;
@@ -90,7 +99,7 @@ export function drawArrow(ctx, x, y, vx, vy, { color = '#4da3ff', scale = 0.05, 
   ctx.restore();
 }
 
-export function drawLabel(ctx, text, x, y, { color = '#eaf2ff', bg = 'rgba(0,0,0,0.55)' } = {}) {
+export function drawLabel(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, { color = '#eaf2ff', bg = 'rgba(0,0,0,0.55)' }: { color?: string; bg?: string } = {}) {
   ctx.save();
   ctx.font = '600 14px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
   const padX = 8, padY = 6;
@@ -113,7 +122,7 @@ export function drawLabel(ctx, text, x, y, { color = '#eaf2ff', bg = 'rgba(0,0,0
   ctx.restore();
 }
 
-export function drawFootOverlay(ctx, pos, vel, labelText) {
+export function drawFootOverlay(ctx: CanvasRenderingContext2D, pos: Point2D | null, vel: { x: number; y: number } | null, labelText?: string) {
   if (!pos) return;
   const speed = vel ? Math.hypot(vel.x, vel.y) : 0;
   const color = speedToColor(speed);

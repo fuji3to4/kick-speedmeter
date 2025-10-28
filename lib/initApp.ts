@@ -1,65 +1,102 @@
 import Chart from 'chart.js/auto';
-import { ensurePoseLoaded, processVideoFrame, setRunningMode, setModelVariant } from './pose';
+import { ensurePoseLoaded, processVideoFrame, setRunningMode } from './pose';
 import { drawPose, drawFootOverlay } from './draw';
 import { computeSpeed, computeSpeed3D, ema, landmarkBySide, worldLandmarkBySide, kneeAngle, pearson } from './utils';
 
 export default function initApp() {
   // UI elements
-  const tabs = document.querySelectorAll('.tab-button');
-  const panels = document.querySelectorAll('.tab-panel');
-  const footSelect = document.getElementById('footSelect');
-  const metersPerPixelInput = document.getElementById('metersPerPixel');
-  const resetMaxBtn = document.getElementById('resetMax');
-  const useWorld3D = document.getElementById('useWorld3D');
-  const modelSelect = document.getElementById('modelVariant');
+  const tabs = document.querySelectorAll<HTMLButtonElement>('.tab-button');
+  const panels = document.querySelectorAll<HTMLElement>('.tab-panel');
+  const footSelect = document.getElementById('footSelect') as HTMLSelectElement;
+  const metersPerPixelInput = document.getElementById('metersPerPixel') as HTMLInputElement;
+  const resetMaxBtn = document.getElementById('resetMax') as HTMLButtonElement;
+  const useWorld3D = document.getElementById('useWorld3D') as HTMLInputElement;
 
   // Live
-  const startLiveBtn = document.getElementById('startLive');
-  const stopLiveBtn = document.getElementById('stopLive');
-  const liveVideo = document.getElementById('liveVideo');
-  const liveCanvas = document.getElementById('liveCanvas');
-  const liveSpeedPxEl = document.getElementById('liveSpeedPx');
-  const liveSpeedMEl = document.getElementById('liveSpeedM');
-  const liveMaxPxEl = document.getElementById('liveMaxPx');
-  const liveMaxMEl = document.getElementById('liveMaxM');
+  const startLiveBtn = document.getElementById('startLive') as HTMLButtonElement;
+  const stopLiveBtn = document.getElementById('stopLive') as HTMLButtonElement;
+  const liveVideo = document.getElementById('liveVideo') as HTMLVideoElement;
+  const liveCanvas = document.getElementById('liveCanvas') as HTMLCanvasElement;
+  const liveSpeedPxEl = document.getElementById('liveSpeedPx') as HTMLElement;
+  const liveSpeedMEl = document.getElementById('liveSpeedM') as HTMLElement;
+  const liveMaxPxEl = document.getElementById('liveMaxPx') as HTMLElement;
+  const liveMaxMEl = document.getElementById('liveMaxM') as HTMLElement;
 
   // File video
-  const fileInput = document.getElementById('videoFile');
-  const fileVideo = document.getElementById('fileVideo');
-  const fileCanvas = document.getElementById('fileCanvas');
-  const fileSpeedPxEl = document.getElementById('fileSpeedPx');
-  const fileSpeedMEl = document.getElementById('fileSpeedM');
-  const fileMaxPxEl = document.getElementById('fileMaxPx');
-  const fileMaxMEl = document.getElementById('fileMaxM');
-  const fileMaxAtEl = document.getElementById('fileMaxAt');
-  let fileChart;
+  const fileInput = document.getElementById('videoFile') as HTMLInputElement;
+  const fileVideo = document.getElementById('fileVideo') as HTMLVideoElement;
+  const fileCanvas = document.getElementById('fileCanvas') as HTMLCanvasElement;
+  const fileSpeedPxEl = document.getElementById('fileSpeedPx') as HTMLElement;
+  const fileSpeedMEl = document.getElementById('fileSpeedM') as HTMLElement;
+  const fileMaxPxEl = document.getElementById('fileMaxPx') as HTMLElement;
+  const fileMaxMEl = document.getElementById('fileMaxM') as HTMLElement;
+  const fileMaxAtEl = document.getElementById('fileMaxAt') as HTMLElement;
+  let fileChart: Chart | undefined;
 
   // Compare
-  const refInput = document.getElementById('refVideoFile');
-  const usrInput = document.getElementById('usrVideoFile');
-  const refVideo = document.getElementById('refVideo');
-  const usrVideo = document.getElementById('usrVideo');
-  const refCanvas = document.getElementById('refCanvas');
-  const usrCanvas = document.getElementById('usrCanvas');
-  const corrSpeedEl = document.getElementById('corrSpeed');
-  const corrKneeEl = document.getElementById('corrKnee');
-  let compareChart;
+  const refInput = document.getElementById('refVideoFile') as HTMLInputElement | null;
+  const usrInput = document.getElementById('usrVideoFile') as HTMLInputElement | null;
+  const refVideo = document.getElementById('refVideo') as HTMLVideoElement;
+  const usrVideo = document.getElementById('usrVideo') as HTMLVideoElement;
+  const refCanvas = document.getElementById('refCanvas') as HTMLCanvasElement;
+  const usrCanvas = document.getElementById('usrCanvas') as HTMLCanvasElement;
+  const corrSpeedEl = document.getElementById('corrSpeed') as HTMLElement;
+  const corrKneeEl = document.getElementById('corrKnee') as HTMLElement;
+  let compareChart: Chart | undefined;
 
   // State
-  let liveReqId = null;
-  let livePrev = null;
-  let livePrev3D = null;
-  let liveEmaPx = null, liveEmaM = null;
-  let liveEmaM3D = null;
+  let liveReqId: number | null = null;
+  let livePrev: { x: number; y: number; t: number } | null = null;
+  let livePrev3D: { x: number; y: number; z?: number; t: number } | null = null;
+  let liveEmaPx: number | null = null, liveEmaM: number | null = null;
+  let liveEmaM3D: number | null = null;
   let liveMaxPx = 0, liveMaxM = 0;
   let liveMaxM3D = 0;
-  let stream = null;
+  let stream: MediaStream | null = null;
+  let isLiveActive = false;
 
-  function activateTab(name) {
-    tabs.forEach(btn => btn.classList.toggle('active', btn.dataset.tab === name));
-    panels.forEach(p => p.classList.toggle('active', p.id === `tab-${name}`));
+  function getCameraConstraints(facing: 'environment' | 'user') {
+    return {
+      video: { facingMode: facing, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } },
+      audio: false
+    } as MediaStreamConstraints;
   }
-  tabs.forEach(btn => btn.addEventListener('click', () => activateTab(btn.dataset.tab)));
+
+  function attachStreamHandlers(s: MediaStream | null) {
+    if (!s) return;
+    const tracks = s.getVideoTracks();
+    tracks.forEach(track => {
+      track.onended = () => { if (isLiveActive) startLive().catch(() => {}); };
+      track.onmute = () => { try { liveVideo.play().catch(()=>{}); } catch {} };
+      track.onunmute = () => { try { liveVideo.play().catch(()=>{}); } catch {} };
+    });
+  }
+
+  function activateTab(name: string) {
+    tabs.forEach(btn => {
+      const isActive = btn.dataset.tab === name;
+      btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      btn.classList.toggle('bg-blue-600', isActive);
+      btn.classList.toggle('text-white', isActive);
+      btn.classList.toggle('border-blue-600', isActive);
+      btn.classList.toggle('bg-white', !isActive);
+      btn.classList.toggle('text-gray-900', !isActive);
+      btn.classList.toggle('border-gray-300', !isActive);
+    });
+    panels.forEach(p => {
+      const isActive = p.id === `tab-${name}`;
+      p.classList.toggle('hidden', !isActive);
+    });
+  }
+  tabs.forEach(btn => btn.addEventListener('click', () => {
+    const next = (btn as HTMLButtonElement).dataset.tab as string;
+    const livePanel = document.getElementById('tab-live');
+    const isLiveVisible = livePanel && !livePanel.classList.contains('hidden');
+    if (isLiveVisible && next !== 'live' && stream) {
+      stopLive();
+    }
+    activateTab(next);
+  }));
 
   resetMaxBtn.addEventListener('click', () => {
     liveMaxPx = 0; liveMaxM = 0; liveMaxM3D = 0;
@@ -70,16 +107,16 @@ export default function initApp() {
     fileMaxAtEl.textContent = '-';
   });
 
-  // Switch model variant (lite/full/heavy)
-  modelSelect?.addEventListener('change', async (e) => {
-    const v = e.target.value;
-    await setModelVariant(v);
-  });
+  // モデル選択や先読みのメカニクスは廃止（シンプル化）
 
-  function resizeCanvasToVideo(canvas, video) {
+  function resizeCanvasToVideo(canvas: HTMLCanvasElement, video: HTMLVideoElement) {
     const rect = video.getBoundingClientRect();
-    canvas.width = video.videoWidth || rect.width;
-    canvas.height = video.videoHeight || rect.height;
+    // 内部ピクセルサイズは実動画サイズが取得できた時のみ更新する
+    if (video.videoWidth > 0 && video.videoHeight > 0) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+    }
+    // 見た目サイズは常に更新
     canvas.style.width = video.clientWidth + 'px';
     canvas.style.height = video.clientHeight + 'px';
   }
@@ -88,14 +125,28 @@ export default function initApp() {
   async function startLive() {
     await ensurePoseLoaded();
     setRunningMode('VIDEO');
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(getCameraConstraints('environment'));
+    } catch (e) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(getCameraConstraints('user'));
+      } catch (e2) {
+        throw e;
+      }
+    }
     liveVideo.srcObject = stream;
+    await new Promise<void>((res) => {
+      const onLoaded = () => { liveVideo.removeEventListener('loadedmetadata', onLoaded); res(); };
+      liveVideo.addEventListener('loadedmetadata', onLoaded);
+    });
     await liveVideo.play();
     resizeCanvasToVideo(liveCanvas, liveVideo);
     livePrev = null; livePrev3D = null;
     liveEmaPx = null; liveEmaM = null; liveEmaM3D = null;
     liveMaxPx = 0; liveMaxM = 0; liveMaxM3D = 0;
     startLiveBtn.disabled = true; stopLiveBtn.disabled = false;
+    isLiveActive = true;
+    attachStreamHandlers(stream);
     liveLoop();
   }
 
@@ -104,17 +155,23 @@ export default function initApp() {
     liveReqId = null;
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     startLiveBtn.disabled = false; stopLiveBtn.disabled = true;
+    isLiveActive = false;
   }
 
   function liveLoop() {
     const now = performance.now();
     try {
-      const result = processVideoFrame(liveVideo, now);
-      const ctx = liveCanvas.getContext('2d');
+      // 初期フレームで video の寸法が 0 のことがあるため、準備完了までスキップ
+      if (liveVideo.videoWidth === 0 || liveVideo.videoHeight === 0 || liveVideo.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        liveReqId = requestAnimationFrame(liveLoop);
+        return;
+      }
+      const result = processVideoFrame(liveVideo, now) as any;
+      const ctx = liveCanvas.getContext('2d')!;
       resizeCanvasToVideo(liveCanvas, liveVideo);
       if (result && result.landmarks && result.landmarks.length) {
         drawPose(ctx, result.landmarks);
-        const side = footSelect.value;
+        const side = (footSelect.value as 'left' | 'right');
         const foot2D = landmarkBySide(result.landmarks, side, 'foot_index') || landmarkBySide(result.landmarks, side, 'ankle');
         const foot3D = result.worldLandmarks ? (worldLandmarkBySide(result.worldLandmarks, side, 'foot_index') || worldLandmarkBySide(result.worldLandmarks, side, 'ankle')) : null;
         if (foot2D) {
@@ -153,22 +210,22 @@ export default function initApp() {
           livePrev3D = curr3D;
         }
       } else {
-        const ctx = liveCanvas.getContext('2d');
+        const ctx = liveCanvas.getContext('2d')!;
         ctx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
       }
     } catch (e) { /* ignore */ }
     liveReqId = requestAnimationFrame(liveLoop);
   }
 
-  startLiveBtn.addEventListener('click', startLive);
-  stopLiveBtn.addEventListener('click', stopLive);
+  startLiveBtn.addEventListener('click', () => { startLive().catch(()=>{}); });
+  stopLiveBtn.addEventListener('click', () => stopLive());
 
   // File video processing
-  let fileSeries = [];
+  let fileSeries: Array<{ t: number; px: number; mCal: number; mWorld: number; pt: any; pt3D: any }> = [];
   let fileMax = { px: 0, mCal: 0, mWorld: 0, at: 0 };
 
   fileInput.addEventListener('change', async (e) => {
-    const f = e.target.files?.[0];
+    const f = (e.target as HTMLInputElement).files?.[0];
     if (!f) return;
     fileVideo.src = URL.createObjectURL(f);
     await fileVideo.load();
@@ -184,13 +241,18 @@ export default function initApp() {
 
   function processFileVideo() {
     if (fileVideo.paused || fileVideo.ended) return;
+    // 動画の寸法が 0 のうちは推論しない
+    if (fileVideo.videoWidth === 0 || fileVideo.videoHeight === 0 || fileVideo.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      requestAnimationFrame(processFileVideo);
+      return;
+    }
     const ts = fileVideo.currentTime * 1000;
-    const result = processVideoFrame(fileVideo, ts);
-    const ctx = fileCanvas.getContext('2d');
+    const result = processVideoFrame(fileVideo, ts) as any;
+    const ctx = fileCanvas.getContext('2d')!;
     resizeCanvasToVideo(fileCanvas, fileVideo);
     if (result && result.landmarks && result.landmarks.length) {
       drawPose(ctx, result.landmarks);
-      const side = footSelect.value;
+      const side = (footSelect.value as 'left' | 'right');
       const foot2D = landmarkBySide(result.landmarks, side, 'foot_index') || landmarkBySide(result.landmarks, side, 'ankle');
       const foot3D = result.worldLandmarks ? (worldLandmarkBySide(result.worldLandmarks, side, 'foot_index') || worldLandmarkBySide(result.worldLandmarks, side, 'ankle')) : null;
       if (foot2D || foot3D) {
@@ -240,7 +302,7 @@ export default function initApp() {
     const mCal = fileSeries.map(d => d.mCal);
     const mWorld = fileSeries.map(d => d.mWorld);
     if (!fileChart) {
-      const ctx = document.getElementById('fileChart').getContext('2d');
+      const ctx = (document.getElementById('fileChart') as HTMLCanvasElement).getContext('2d')!;
       fileChart = new Chart(ctx, {
         type: 'line',
         data: {
@@ -254,7 +316,6 @@ export default function initApp() {
         options: {
           responsive: true,
           interaction: { mode: 'index', intersect: false },
-          stacked: false,
           scales: {
             y: { type: 'linear', position: 'left', title: { display: true, text: 'px/s' } },
             y1: { type: 'linear', position: 'right', title: { display: true, text: 'm/s' }, grid: { drawOnChartArea: false } }
@@ -262,26 +323,26 @@ export default function initApp() {
         }
       });
     } else {
-      fileChart.data.labels = labels;
-      fileChart.data.datasets[0].data = px;
-      fileChart.data.datasets[1].data = mCal;
-      fileChart.data.datasets[2].data = mWorld;
+      fileChart.data.labels = labels as any;
+      fileChart.data.datasets[0].data = px as any;
+      (fileChart.data.datasets[1] as any).data = mCal as any;
+      (fileChart.data.datasets[2] as any).data = mWorld as any;
       fileChart.update('none');
     }
     if (fileChart) {
       const use3D = useWorld3D.checked;
-      fileChart.data.datasets[1].hidden = use3D;
-      fileChart.data.datasets[2].hidden = !use3D;
+      (fileChart.data.datasets[1] as any).hidden = use3D;
+      (fileChart.data.datasets[2] as any).hidden = !use3D;
       fileChart.update('none');
     }
   }
 
   // Compare helpers
-  async function extractSeriesFromVideo(videoEl, side, canvasEl) {
+  async function extractSeriesFromVideo(videoEl: HTMLVideoElement, side: 'left' | 'right', canvasEl: HTMLCanvasElement) {
     await ensurePoseLoaded();
     setRunningMode('VIDEO');
-    return new Promise((resolve) => {
-      const series = { t: [], speed: [], knee: [] };
+    return new Promise<{ t: number[]; speed: number[]; knee: number[] }>((resolve) => {
+      const series = { t: [], speed: [], knee: [] as number[] } as { t: number[]; speed: number[]; knee: number[] };
       const onPlay = () => { step(); };
       const onEnded = () => { cleanup(); resolve(series); };
       const cleanup = () => {
@@ -291,12 +352,17 @@ export default function initApp() {
       videoEl.addEventListener('play', onPlay);
       videoEl.addEventListener('ended', onEnded);
       if (!videoEl.paused) onPlay();
-      let prevPt = null;
+      let prevPt: { x: number; y: number; t: number } | null = null;
       const step = () => {
         if (videoEl.paused || videoEl.ended) return;
+        // 寸法が 0 のうちはスキップ
+        if (videoEl.videoWidth === 0 || videoEl.videoHeight === 0 || videoEl.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+          requestAnimationFrame(step);
+          return;
+        }
         const ts = videoEl.currentTime * 1000;
-        const res = processVideoFrame(videoEl, ts);
-        const ctx = canvasEl.getContext('2d');
+        const res = processVideoFrame(videoEl, ts) as any;
+        const ctx = canvasEl.getContext('2d')!;
         resizeCanvasToVideo(canvasEl, videoEl);
         if (res && res.landmarks && res.landmarks.length) {
           drawPose(ctx, res.landmarks);
@@ -310,8 +376,8 @@ export default function initApp() {
               spx = computeSpeed(prevPt, curr, dt, 0).pxPerSec;
             }
             series.t.push(ts / 1000);
-            series.speed.push(spx);
-            series.knee.push(kneeDeg);
+            (series.speed as number[]).push(spx);
+            (series.knee as number[]).push(kneeDeg);
             prevPt = curr;
           }
         }
@@ -320,13 +386,13 @@ export default function initApp() {
     });
   }
 
-  function resample(series, n = 200) {
-    if (!series.t.length) return { t: [], x: [] };
+  function resample(series: { t: number[]; speed: number[]; knee: number[] }, n = 200) {
+    if (!series.t.length) return { t: [] as number[], speed: [] as number[], knee: [] as number[] };
     const t0 = series.t[0];
     const t1 = series.t[series.t.length - 1];
     const step = (t1 - t0) / (n - 1);
     const tOut = Array.from({ length: n }, (_, i) => t0 + i * step);
-    const interp = (t, arr) => {
+    const interp = (t: number, arr: number[]) => {
       let i = series.t.findIndex(tt => tt >= t);
       if (i <= 0) return arr[0] ?? 0;
       if (i === -1) return arr[arr.length - 1] ?? 0;
@@ -338,7 +404,7 @@ export default function initApp() {
     return { t: tOut, speed: tOut.map(t => interp(t, series.speed)), knee: tOut.map(t => interp(t, series.knee)) };
   }
 
-  function updateCompareChart(refS, usrS) {
+  function updateCompareChart(refS: { t: number[]; speed: number[]; knee: number[] }, usrS: { t: number[]; speed: number[]; knee: number[] }) {
     const refR = resample(refS);
     const usrR = resample(usrS);
     const corrS = pearson(refR.speed, usrR.speed);
@@ -347,7 +413,7 @@ export default function initApp() {
     corrKneeEl.textContent = corrK.toFixed(2);
     const labels = refR.t.map(t => (t - refR.t[0]).toFixed(2));
     if (!compareChart) {
-      const ctx = document.getElementById('compareChart').getContext('2d');
+      const ctx = (document.getElementById('compareChart') as HTMLCanvasElement).getContext('2d')!;
       compareChart = new Chart(ctx, {
         type: 'line',
         data: {
@@ -362,7 +428,6 @@ export default function initApp() {
         options: {
           responsive: true,
           interaction: { mode: 'index', intersect: false },
-          stacked: false,
           scales: {
             y: { type: 'linear', position: 'left', title: { display: true, text: 'px/s' } },
             y1: { type: 'linear', position: 'right', title: { display: true, text: '角度(°)' }, grid: { drawOnChartArea: false } }
@@ -370,26 +435,27 @@ export default function initApp() {
         }
       });
     } else {
-      compareChart.data.labels = labels;
-      compareChart.data.datasets[0].data = refR.speed;
-      compareChart.data.datasets[1].data = usrR.speed;
-      compareChart.data.datasets[2].data = refR.knee;
-      compareChart.data.datasets[3].data = usrR.knee;
+      compareChart.data.labels = labels as any;
+      compareChart.data.datasets[0].data = refR.speed as any;
+      (compareChart.data.datasets[1] as any).data = usrR.speed as any;
+      (compareChart.data.datasets[2] as any).data = refR.knee as any;
+      (compareChart.data.datasets[3] as any).data = usrR.knee as any;
       compareChart.update('none');
     }
   }
 
-  let refSeries = null, usrSeries = null;
+  let refSeries: { t: number[]; speed: number[]; knee: number[] } | null = null;
+  let usrSeries: { t: number[]; speed: number[]; knee: number[] } | null = null;
   refInput?.addEventListener('change', (e) => {
-    const f = e.target.files?.[0];
+    const f = (e.target as HTMLInputElement).files?.[0];
     if (!f) return; refVideo.src = URL.createObjectURL(f);
   });
   usrInput?.addEventListener('change', (e) => {
-    const f = e.target.files?.[0];
+    const f = (e.target as HTMLInputElement).files?.[0];
     if (!f) return; usrVideo.src = URL.createObjectURL(f);
   });
   async function runCompare() {
-    const side = footSelect.value;
+    const side = (footSelect.value as 'left' | 'right');
     if (refVideo.src) { refVideo.currentTime = 0; await refVideo.play(); refSeries = await extractSeriesFromVideo(refVideo, side, refCanvas); }
     if (usrVideo.src) { usrVideo.currentTime = 0; await usrVideo.play(); usrSeries = await extractSeriesFromVideo(usrVideo, side, usrCanvas); }
     if (refSeries && usrSeries) updateCompareChart(refSeries, usrSeries);

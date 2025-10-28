@@ -1,11 +1,13 @@
-export function distance2D(a, b) {
+import type { Point2D, Point3D, Landmarks2D, Landmarks3D, Side } from './types';
+
+export function distance2D(a?: Point2D | null, b?: Point2D | null): number {
   if (!a || !b) return 0;
   const dx = a.x - b.x;
   const dy = a.y - b.y;
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-export function computeSpeed(prevPt, currPt, dtSec, metersPerPixel = 0) {
+export function computeSpeed(prevPt: Point2D | null, currPt: Point2D | null, dtSec: number, metersPerPixel = 0): { pxPerSec: number; mPerSec: number } {
   if (!prevPt || !currPt || !dtSec || dtSec <= 0) return { pxPerSec: 0, mPerSec: 0 };
   const dpx = distance2D(prevPt, currPt);
   const pxPerSec = dpx / dtSec;
@@ -13,7 +15,7 @@ export function computeSpeed(prevPt, currPt, dtSec, metersPerPixel = 0) {
   return { pxPerSec, mPerSec };
 }
 
-export function distance3D(a, b) {
+export function distance3D(a?: Point3D | null, b?: Point3D | null): number {
   if (!a || !b) return 0;
   const dx = a.x - b.x;
   const dy = a.y - b.y;
@@ -21,18 +23,18 @@ export function distance3D(a, b) {
   return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-export function computeSpeed3D(prevPt, currPt, dtSec) {
+export function computeSpeed3D(prevPt: Point3D | null, currPt: Point3D | null, dtSec: number): number {
   if (!prevPt || !currPt || !dtSec || dtSec <= 0) return 0;
   const d = distance3D(prevPt, currPt);
   return d / dtSec;
 }
 
-export function ema(prev, curr, alpha = 0.3) {
+export function ema(prev: number | null, curr: number, alpha = 0.3): number {
   if (prev == null) return curr;
   return prev * (1 - alpha) + curr * alpha;
 }
 
-export function angleAt(A, B, C) {
+export function angleAt(A?: Point2D | null, B?: Point2D | null, C?: Point2D | null): number {
   if (!A || !B || !C) return 0;
   const v1x = A.x - B.x, v1y = A.y - B.y;
   const v2x = C.x - B.x, v2y = C.y - B.y;
@@ -44,7 +46,7 @@ export function angleAt(A, B, C) {
   return (Math.acos(cos) * 180) / Math.PI;
 }
 
-export function pearson(x, y) {
+export function pearson(x: number[], y: number[]): number {
   const n = Math.min(x.length, y.length);
   if (n < 3) return 0;
   let sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
@@ -60,10 +62,10 @@ export function pearson(x, y) {
   return cov / Math.sqrt(vx * vy);
 }
 
-export function landmarkBySide(landmarks, side, key) {
+export function landmarkBySide(landmarks: Landmarks2D | null | undefined, side: Side, key: 'ankle' | 'foot_index') {
   if (!landmarks || !landmarks[0]) return null;
   const lm = landmarks[0];
-  const map = {
+  const map: Record<Side, Record<'ankle' | 'foot_index', number>> = {
     left: { ankle: 27, foot_index: 31 },
     right: { ankle: 28, foot_index: 32 }
   };
@@ -72,10 +74,10 @@ export function landmarkBySide(landmarks, side, key) {
   return lm[idx];
 }
 
-export function worldLandmarkBySide(worldLandmarks, side, key) {
+export function worldLandmarkBySide(worldLandmarks: Landmarks3D | null | undefined, side: Side, key: 'ankle' | 'foot_index') {
   if (!worldLandmarks || !worldLandmarks[0]) return null;
   const lm = worldLandmarks[0];
-  const map = {
+  const map: Record<Side, Record<'ankle' | 'foot_index', number>> = {
     left: { ankle: 27, foot_index: 31 },
     right: { ankle: 28, foot_index: 32 }
   };
@@ -84,10 +86,10 @@ export function worldLandmarkBySide(worldLandmarks, side, key) {
   return lm[idx];
 }
 
-export function kneeAngle(landmarks, side) {
+export function kneeAngle(landmarks: Landmarks2D | null | undefined, side: Side): number {
   if (!landmarks || !landmarks[0]) return 0;
   const lm = landmarks[0];
-  const map = {
+  const map: Record<Side, { hip: number; knee: number; ankle: number }> = {
     left: { hip: 23, knee: 25, ankle: 27 },
     right: { hip: 24, knee: 26, ankle: 28 }
   };
@@ -95,4 +97,4 @@ export function kneeAngle(landmarks, side) {
   return angleAt(lm[m.hip], lm[m.knee], lm[m.ankle]);
 }
 
-export function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+export function clamp(v: number, min: number, max: number): number { return Math.max(min, Math.min(max, v)); }
