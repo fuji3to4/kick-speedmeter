@@ -1,0 +1,6 @@
+.bmad-core/
+.vscode/
+node_modules/
+
+src/
+index.html
