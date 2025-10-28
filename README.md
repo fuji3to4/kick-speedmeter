@@ -1,6 +1,6 @@
 # Kick Speedmeter (MediaPipe Pose, Web)
 
-https://fuji3to4.github.io/kick-speedmeter/
+[Kick-speedmeter](https://fuji3to4.github.io/kick-speedmeter/)
 
 サッカーのキック速度を MediaPipe Pose で計測するシンプルな Web アプリです。
 - ライブ（カメラ）計測
