@@ -1,1 +1,0 @@
-self.__REACT_LOADABLE_MANIFEST='{"lib\\\\pose.js -> @mediapipe/tasks-vision":{"id":3386,"files":["static/chunks/386.9d1ddb8f73c7790b.js"]}}';
