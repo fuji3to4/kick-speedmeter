@@ -57,8 +57,19 @@ export default function Page() {
               <div className="flex justify-between py-1 border-b border-dashed"><span>現在(m/s):</span><strong id="liveSpeedM">-</strong></div>
               <div className="flex justify-between py-1 border-b border-dashed"><span>最大(px/s):</span><strong id="liveMaxPx">-</strong></div>
               <div className="flex justify-between py-1"><span>最大(m/s):</span><strong id="liveMaxM">-</strong></div>
-              <div className="mt-3 flex gap-2">
-                <button id="resetMax" className="border bg-white text-gray-900 px-3 py-2 rounded appearance-none">最大速度リセット</button>
+              <div className="mt-3 flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <input id="captureOnMax" type="checkbox" />
+                  <label htmlFor="captureOnMax" className="text-gray-700">最大速度時にスクショを保存</label>
+                </div>
+                <div className="flex gap-2">
+                  <button id="resetMax" className="border bg-white text-gray-900 px-3 py-2 rounded appearance-none">最大速度リセット</button>
+                  <a id="downloadMaxShot" className="border bg-white text-gray-900 px-3 py-2 rounded appearance-none hidden" download="max-speed-shot.png">スクショをダウンロード</a>
+                </div>
+                <div id="maxShotWrap" className="hidden">
+                  <p className="text-sm text-gray-600 m-0">最大時のスクショ</p>
+                  <img id="liveMaxShot" alt="最大速度時のスクリーンショット" className="border rounded max-w-full h-auto" />
+                </div>
               </div>
             </div>
           </div>

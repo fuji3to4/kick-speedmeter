@@ -21,6 +21,10 @@ export default function initApp() {
   const liveSpeedMEl = document.getElementById('liveSpeedM') as HTMLElement;
   const liveMaxPxEl = document.getElementById('liveMaxPx') as HTMLElement;
   const liveMaxMEl = document.getElementById('liveMaxM') as HTMLElement;
+  const captureOnMax = document.getElementById('captureOnMax') as HTMLInputElement | null;
+  const liveMaxShotImg = document.getElementById('liveMaxShot') as HTMLImageElement | null;
+  const maxShotWrap = document.getElementById('maxShotWrap') as HTMLElement | null;
+  const downloadMaxShot = document.getElementById('downloadMaxShot') as HTMLAnchorElement | null;
 
   // File video
   const fileInput = document.getElementById('videoFile') as HTMLInputElement;
@@ -54,6 +58,8 @@ export default function initApp() {
   let liveMaxM3D = 0;
   let stream: MediaStream | null = null;
   let isLiveActive = false;
+  let lastShotUrl: string | null = null;
+  let lastShotAt = 0;
 
   function getCameraConstraints(facing: 'environment' | 'user') {
     return {
@@ -105,6 +111,11 @@ export default function initApp() {
     fileMaxPxEl.textContent = '-';
     fileMaxMEl.textContent = '-';
     fileMaxAtEl.textContent = '-';
+    if (lastShotUrl) { try { URL.revokeObjectURL(lastShotUrl); } catch {} }
+    lastShotUrl = null; lastShotAt = 0;
+    if (liveMaxShotImg) liveMaxShotImg.removeAttribute('src');
+    if (maxShotWrap) maxShotWrap.classList.add('hidden');
+    if (downloadMaxShot) { downloadMaxShot.classList.add('hidden'); downloadMaxShot.removeAttribute('href'); }
   });
 
   // モデル選択や先読みのメカニクスは廃止（シンプル化）
@@ -184,10 +195,10 @@ export default function initApp() {
             liveEmaM = ema(liveEmaM, mPerSec);
             if (!useWorld3D.checked) {
               liveSpeedMEl.textContent = mpp > 0 ? (liveEmaM ?? 0).toFixed(2) : '-';
-              if (mPerSec > liveMaxM && mpp > 0) { liveMaxM = mPerSec; liveMaxMEl.textContent = liveMaxM.toFixed(2); }
+              if (mPerSec > liveMaxM && mpp > 0) { liveMaxM = mPerSec; liveMaxMEl.textContent = liveMaxM.toFixed(2); maybeCapture('mCal', now); }
             }
             liveSpeedPxEl.textContent = (liveEmaPx ?? 0).toFixed(1);
-            if (pxPerSec > liveMaxPx) { liveMaxPx = pxPerSec; liveMaxPxEl.textContent = liveMaxPx.toFixed(1); }
+            if (pxPerSec > liveMaxPx) { liveMaxPx = pxPerSec; liveMaxPxEl.textContent = liveMaxPx.toFixed(1); maybeCapture('px', now); }
             const vel = { x: (curr.x - livePrev.x) / dt, y: (curr.y - livePrev.y) / dt };
             const label = useWorld3D.checked
               ? (liveEmaM3D != null ? `${(liveEmaM3D).toFixed(2)} m/s` : '')
@@ -204,7 +215,7 @@ export default function initApp() {
             liveEmaM3D = ema(liveEmaM3D, mps);
             if (useWorld3D.checked) {
               liveSpeedMEl.textContent = (liveEmaM3D ?? 0).toFixed(2);
-              if (mps > liveMaxM3D) { liveMaxM3D = mps; liveMaxMEl.textContent = liveMaxM3D.toFixed(2); }
+              if (mps > liveMaxM3D) { liveMaxM3D = mps; liveMaxMEl.textContent = liveMaxM3D.toFixed(2); maybeCapture('m3D', now); }
             }
           }
           livePrev3D = curr3D;
@@ -215,6 +226,56 @@ export default function initApp() {
       }
     } catch (e) { /* ignore */ }
     liveReqId = requestAnimationFrame(liveLoop);
+  }
+
+  function shouldCapture(kind: 'px' | 'mCal' | 'm3D'): boolean {
+    if (!captureOnMax || !captureOnMax.checked) return false;
+    const use3D = !!useWorld3D?.checked;
+    const mpp = parseFloat(metersPerPixelInput.value) || 0;
+    return (use3D && kind === 'm3D') || (!use3D && mpp > 0 && kind === 'mCal') || (!use3D && mpp <= 0 && kind === 'px');
+  }
+
+  function maybeCapture(kind: 'px' | 'mCal' | 'm3D', nowTs: number) {
+    if (!shouldCapture(kind)) return;
+    // throttle: at most one capture per 800ms to reduce load
+    if (nowTs - lastShotAt < 800) return;
+    lastShotAt = nowTs;
+    captureCurrentLiveFrame().catch(() => {});
+  }
+
+  async function captureCurrentLiveFrame() {
+    try {
+      const vw = liveVideo.videoWidth || liveCanvas.width;
+      const vh = liveVideo.videoHeight || liveCanvas.height;
+      if (!vw || !vh) return;
+      const off = document.createElement('canvas');
+      off.width = vw; off.height = vh;
+      const octx = off.getContext('2d');
+      if (!octx) return;
+      // draw base video then overlay
+      octx.drawImage(liveVideo, 0, 0, vw, vh);
+      octx.drawImage(liveCanvas, 0, 0, vw, vh);
+      await new Promise<void>((resolve) => {
+        off.toBlob((blob) => {
+          if (!blob) { resolve(); return; }
+          if (lastShotUrl) { try { URL.revokeObjectURL(lastShotUrl); } catch {}
+          }
+          const url = URL.createObjectURL(blob);
+          lastShotUrl = url;
+          if (liveMaxShotImg) {
+            liveMaxShotImg.src = url;
+          }
+          if (maxShotWrap) {
+            maxShotWrap.classList.remove('hidden');
+          }
+          if (downloadMaxShot) {
+            downloadMaxShot.href = url;
+            downloadMaxShot.classList.remove('hidden');
+          }
+          resolve();
+        }, 'image/png');
+      });
+    } catch {}
   }
 
   startLiveBtn.addEventListener('click', () => { startLive().catch(()=>{}); });
