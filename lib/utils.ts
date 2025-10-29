@@ -1,20 +1,5 @@
 import type { Point2D, Point3D, Landmarks2D, Landmarks3D, Side } from './types';
 
-export function distance2D(a?: Point2D | null, b?: Point2D | null): number {
-  if (!a || !b) return 0;
-  const dx = a.x - b.x;
-  const dy = a.y - b.y;
-  return Math.sqrt(dx * dx + dy * dy);
-}
-
-export function computeSpeed(prevPt: Point2D | null, currPt: Point2D | null, dtSec: number, metersPerPixel = 0): { pxPerSec: number; mPerSec: number } {
-  if (!prevPt || !currPt || !dtSec || dtSec <= 0) return { pxPerSec: 0, mPerSec: 0 };
-  const dpx = distance2D(prevPt, currPt);
-  const pxPerSec = dpx / dtSec;
-  const mPerSec = metersPerPixel > 0 ? pxPerSec * metersPerPixel : 0;
-  return { pxPerSec, mPerSec };
-}
-
 export function distance3D(a?: Point3D | null, b?: Point3D | null): number {
   if (!a || !b) return 0;
   const dx = a.x - b.x;

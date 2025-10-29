@@ -34,13 +34,12 @@ export default function Page() {
               <option value="left_hand">左手</option>
             </select>
           </label>
-          <label className="grid gap-1 text-gray-700" title="m/px 推定。正確にしたい場合は校正してください。">
-            メートル/ピクセル(m/px):
-            <input id="metersPerPixel" type="number" step="0.0001" defaultValue={0} className="border rounded px-2 py-2" />
+          {/* 仕様簡素化: 3D m/s のみ対応。m/px と 2D 切替は撤去 */}
+          <label className="grid gap-1 text-gray-700" title="速度の瞬間値を平滑化する係数 (0=平滑化なし, 1=即時追従)">
+            平滑化係数 α (0:平滑化なし, 0.05:滑らか-1:敏感):
+            <input id="emaAlpha" type="number" min={0} max={1} step={0.05} defaultValue={0.3} className="border rounded px-2 py-2" />
           </label>
-          <label className="inline-flex items-center gap-2 text-gray-700" title="3DのworldLandmarks（m単位, 相対スケール）でm/sを計算します。">
-            <input id="useWorld3D" type="checkbox" /> 3Dワールド(m/s)を使用
-          </label>
+          {/* スクショ閾値は負荷影響が小さいため撤去（最大更新時のみ保存） */}
           {/* モデル選択は廃止（シンプル化） */}
         </div>
       </section>
@@ -54,10 +53,8 @@ export default function Page() {
               <canvas id="liveCanvas" className="absolute inset-0 w-full h-full pointer-events-none"></canvas>
             </div>
             <div className="border rounded p-3 bg-white">
-              <h3 className="m-0 mb-2 text-base">速度</h3>
-              <div className="flex justify-between py-1 border-b border-dashed"><span>現在(px/s):</span><strong id="liveSpeedPx">-</strong></div>
+              <h3 className="m-0 mb-2 text-base">速度 (3D m/s)</h3>
               <div className="flex justify-between py-1 border-b border-dashed"><span>現在(m/s):</span><strong id="liveSpeedM">-</strong></div>
-              <div className="flex justify-between py-1 border-b border-dashed"><span>最大(px/s):</span><strong id="liveMaxPx">-</strong></div>
               <div className="flex justify-between py-1"><span>最大(m/s):</span><strong id="liveMaxM">-</strong></div>
               <div className="mt-3 flex flex-col gap-2">
                 <div className="flex items-center gap-2">
@@ -92,10 +89,8 @@ export default function Page() {
               </div>
             </div>
             <div className="border rounded p-3 bg-white">
-              <h3 className="m-0 mb-2 text-base">速度</h3>
-              <div className="flex justify-between py-1 border-b border-dashed"><span>現在(px/s):</span><strong id="fileSpeedPx">-</strong></div>
+              <h3 className="m-0 mb-2 text-base">速度 (3D m/s)</h3>
               <div className="flex justify-between py-1 border-b border-dashed"><span>現在(m/s):</span><strong id="fileSpeedM">-</strong></div>
-              <div className="flex justify-between py-1 border-b border-dashed"><span>最大(px/s):</span><strong id="fileMaxPx">-</strong></div>
               <div className="flex justify-between py-1 border-b border-dashed"><span>最大(m/s):</span><strong id="fileMaxM">-</strong></div>
               <div className="flex justify-between py-1"><span>最大速度時刻:</span><strong id="fileMaxAt">-</strong></div>
             </div>
@@ -127,13 +122,13 @@ export default function Page() {
           </div>
           <div className="px-5 pb-5">
             <div className="border rounded p-3 bg-white">
-              <h3 className="mb-2">速度・角度の比較</h3>
+              <h3 className="mb-2">速度(m/s)・角度の比較</h3>
               <canvas id="compareChart"></canvas>
             </div>
           </div>
           <div className="px-5 pb-8">
             <div className="border rounded p-3 bg-white">
-              <div className="flex justify-between py-1 border-b border-dashed border-slate-700"><span>速度カーブ相関:</span><strong id="corrSpeed">-</strong></div>
+              <div className="flex justify-between py-1 border-b border-dashed border-slate-700"><span>速度カーブ相関(m/s):</span><strong id="corrSpeed">-</strong></div>
               <div className="flex justify-between py-1"><span>膝角カーブ相関:</span><strong id="corrKnee">-</strong></div>
             </div>
           </div>
@@ -141,7 +136,7 @@ export default function Page() {
       </main>
 
       <footer className="px-5 py-3 text-gray-600 border-t">
-        <small>Powered by MediaPipe Tasks Vision (Pose Landmarker). 校正して m/s を有効化してください。</small>
+        <small>Powered by MediaPipe Tasks Vision (Pose Landmarker). 現在は 3D ワールド座標の m/s のみ対応です。</small>
       </footer>
     </>
   );

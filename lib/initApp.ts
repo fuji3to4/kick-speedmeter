@@ -1,25 +1,23 @@
 import Chart from 'chart.js/auto';
 import { ensurePoseLoaded, processVideoFrame, setRunningMode } from './pose';
 import { drawPose, drawFootOverlay } from './draw';
-import { computeSpeed, computeSpeed3D, ema, landmarkBySide, worldLandmarkBySide, kneeAngle, pearson } from './utils';
+import { computeSpeed3D, ema, landmarkBySide, worldLandmarkBySide, kneeAngle, pearson, clamp } from './utils';
 
 export default function initApp() {
   // UI elements
   const tabs = document.querySelectorAll<HTMLButtonElement>('.tab-button');
   const panels = document.querySelectorAll<HTMLElement>('.tab-panel');
   const footSelect = document.getElementById('footSelect') as HTMLSelectElement;
-  const metersPerPixelInput = document.getElementById('metersPerPixel') as HTMLInputElement;
   const resetMaxBtn = document.getElementById('resetMax') as HTMLButtonElement;
-  const useWorld3D = document.getElementById('useWorld3D') as HTMLInputElement;
+  // 3D専用に簡素化したため、m/pxや2D切替はなし
+  const emaAlphaInput = document.getElementById('emaAlpha') as HTMLInputElement | null;
 
   // Live
   const startLiveBtn = document.getElementById('startLive') as HTMLButtonElement;
   const stopLiveBtn = document.getElementById('stopLive') as HTMLButtonElement;
   const liveVideo = document.getElementById('liveVideo') as HTMLVideoElement;
   const liveCanvas = document.getElementById('liveCanvas') as HTMLCanvasElement;
-  const liveSpeedPxEl = document.getElementById('liveSpeedPx') as HTMLElement;
   const liveSpeedMEl = document.getElementById('liveSpeedM') as HTMLElement;
-  const liveMaxPxEl = document.getElementById('liveMaxPx') as HTMLElement;
   const liveMaxMEl = document.getElementById('liveMaxM') as HTMLElement;
   const captureOnMax = document.getElementById('captureOnMax') as HTMLInputElement | null;
   const liveMaxShotImg = document.getElementById('liveMaxShot') as HTMLImageElement | null;
@@ -30,12 +28,11 @@ export default function initApp() {
   const fileInput = document.getElementById('videoFile') as HTMLInputElement;
   const fileVideo = document.getElementById('fileVideo') as HTMLVideoElement;
   const fileCanvas = document.getElementById('fileCanvas') as HTMLCanvasElement;
-  const fileSpeedPxEl = document.getElementById('fileSpeedPx') as HTMLElement;
   const fileSpeedMEl = document.getElementById('fileSpeedM') as HTMLElement;
-  const fileMaxPxEl = document.getElementById('fileMaxPx') as HTMLElement;
   const fileMaxMEl = document.getElementById('fileMaxM') as HTMLElement;
   const fileMaxAtEl = document.getElementById('fileMaxAt') as HTMLElement;
   let fileChart: Chart | undefined;
+  let fileEmaM3D: number | null = null;
 
   // Compare
   const refInput = document.getElementById('refVideoFile') as HTMLInputElement | null;
@@ -52,14 +49,13 @@ export default function initApp() {
   let liveReqId: number | null = null;
   let livePrev: { x: number; y: number; t: number } | null = null;
   let livePrev3D: { x: number; y: number; z?: number; t: number } | null = null;
-  let liveEmaPx: number | null = null, liveEmaM: number | null = null;
   let liveEmaM3D: number | null = null;
-  let liveMaxPx = 0, liveMaxM = 0;
-  let liveMaxM3D = 0;
+  let liveMaxM = 0;
   let stream: MediaStream | null = null;
   let isLiveActive = false;
   let lastShotUrl: string | null = null;
   let lastShotAt = 0;
+  let lastCapturedDisplayM = -Infinity;
 
   function getCameraConstraints(facing: 'environment' | 'user') {
     return {
@@ -105,14 +101,13 @@ export default function initApp() {
   }));
 
   resetMaxBtn.addEventListener('click', () => {
-    liveMaxPx = 0; liveMaxM = 0; liveMaxM3D = 0;
-    liveMaxPxEl.textContent = '-';
+  liveMaxM = 0;
     liveMaxMEl.textContent = '-';
-    fileMaxPxEl.textContent = '-';
     fileMaxMEl.textContent = '-';
     fileMaxAtEl.textContent = '-';
     if (lastShotUrl) { try { URL.revokeObjectURL(lastShotUrl); } catch {} }
     lastShotUrl = null; lastShotAt = 0;
+    lastCapturedDisplayM = -Infinity;
     if (liveMaxShotImg) liveMaxShotImg.removeAttribute('src');
     if (maxShotWrap) maxShotWrap.classList.add('hidden');
     if (downloadMaxShot) { downloadMaxShot.classList.add('hidden'); downloadMaxShot.removeAttribute('href'); }
@@ -152,9 +147,9 @@ export default function initApp() {
     });
     await liveVideo.play();
     resizeCanvasToVideo(liveCanvas, liveVideo);
-    livePrev = null; livePrev3D = null;
-    liveEmaPx = null; liveEmaM = null; liveEmaM3D = null;
-    liveMaxPx = 0; liveMaxM = 0; liveMaxM3D = 0;
+  livePrev = null; livePrev3D = null;
+  liveEmaM3D = null;
+  liveMaxM = 0;
     startLiveBtn.disabled = true; stopLiveBtn.disabled = false;
     isLiveActive = true;
     attachStreamHandlers(stream);
@@ -190,25 +185,15 @@ export default function initApp() {
         const fallback2D = isHand ? ('wrist' as const) : ('ankle' as const);
         const foot2D = landmarkBySide(result.landmarks, side, key2D) || landmarkBySide(result.landmarks, side, fallback2D);
         const foot3D = result.worldLandmarks ? (worldLandmarkBySide(result.worldLandmarks, side, key2D) || worldLandmarkBySide(result.worldLandmarks, side, fallback2D)) : null;
+        // Defer overlay drawing until after 3D speed is computed so the label matches this frame's value
+        let overlayPos: { x: number; y: number } | null = null;
+        let overlayVel: { x: number; y: number } | null = null;
         if (foot2D) {
           const curr = { x: foot2D.x * liveCanvas.width, y: foot2D.y * liveCanvas.height, t: now };
           if (livePrev) {
             const dt = (curr.t - livePrev.t) / 1000;
-            const mpp = parseFloat(metersPerPixelInput.value) || 0;
-            const { pxPerSec, mPerSec } = computeSpeed(livePrev, curr, dt, mpp);
-            liveEmaPx = ema(liveEmaPx, pxPerSec);
-            liveEmaM = ema(liveEmaM, mPerSec);
-            if (!useWorld3D.checked) {
-              liveSpeedMEl.textContent = mpp > 0 ? (liveEmaM ?? 0).toFixed(2) : '-';
-              if (mPerSec > liveMaxM && mpp > 0) { liveMaxM = mPerSec; liveMaxMEl.textContent = liveMaxM.toFixed(2); maybeCapture('mCal', now); }
-            }
-            liveSpeedPxEl.textContent = (liveEmaPx ?? 0).toFixed(1);
-            if (pxPerSec > liveMaxPx) { liveMaxPx = pxPerSec; liveMaxPxEl.textContent = liveMaxPx.toFixed(1); maybeCapture('px', now); }
-            const vel = { x: (curr.x - livePrev.x) / dt, y: (curr.y - livePrev.y) / dt };
-            const label = useWorld3D.checked
-              ? (liveEmaM3D != null ? `${(liveEmaM3D).toFixed(2)} m/s` : '')
-              : (mpp > 0 && liveEmaM != null ? `${(liveEmaM).toFixed(2)} m/s` : `${(liveEmaPx ?? 0).toFixed(0)} px/s`);
-            drawFootOverlay(ctx, curr, vel, label);
+            overlayVel = { x: (curr.x - livePrev.x) / dt, y: (curr.y - livePrev.y) / dt };
+            overlayPos = { x: curr.x, y: curr.y };
           }
           livePrev = curr;
         }
@@ -217,10 +202,27 @@ export default function initApp() {
           if (livePrev3D) {
             const dt = (curr3D.t - livePrev3D.t) / 1000;
             const mps = computeSpeed3D(livePrev3D, curr3D, dt);
-            liveEmaM3D = ema(liveEmaM3D, mps);
-            if (useWorld3D.checked) {
-              liveSpeedMEl.textContent = (liveEmaM3D ?? 0).toFixed(2);
-              if (mps > liveMaxM3D) { liveMaxM3D = mps; liveMaxMEl.textContent = liveMaxM3D.toFixed(2); maybeCapture('m3D', now); }
+            const alpha = clamp(parseFloat(emaAlphaInput?.value || '') || 0.3, 0, 1);
+            liveEmaM3D = ema(liveEmaM3D, mps, alpha);
+            const smoothed = liveEmaM3D ?? 0;
+            liveSpeedMEl.textContent = smoothed.toFixed(2);
+            let needCapture = false;
+            if (smoothed > liveMaxM) {
+              liveMaxM = smoothed;
+              liveMaxMEl.textContent = liveMaxM.toFixed(2);
+              const displayRounded = Number(liveMaxM.toFixed(2));
+              if (displayRounded > lastCapturedDisplayM) {
+                needCapture = true;
+                lastCapturedDisplayM = displayRounded;
+              }
+            }
+            // Draw overlay for this frame with the just-updated smoothed value
+            if (overlayPos) {
+              const label = `${smoothed.toFixed(2)} m/s`;
+              drawFootOverlay(ctx, overlayPos, overlayVel, label);
+            }
+            if (needCapture) {
+              maybeCapture(now);
             }
           }
           livePrev3D = curr3D;
@@ -233,15 +235,8 @@ export default function initApp() {
     liveReqId = requestAnimationFrame(liveLoop);
   }
 
-  function shouldCapture(kind: 'px' | 'mCal' | 'm3D'): boolean {
-    if (!captureOnMax || !captureOnMax.checked) return false;
-    const use3D = !!useWorld3D?.checked;
-    const mpp = parseFloat(metersPerPixelInput.value) || 0;
-    return (use3D && kind === 'm3D') || (!use3D && mpp > 0 && kind === 'mCal') || (!use3D && mpp <= 0 && kind === 'px');
-  }
-
-  function maybeCapture(kind: 'px' | 'mCal' | 'm3D', nowTs: number) {
-    if (!shouldCapture(kind)) return;
+  function maybeCapture(nowTs: number) {
+    if (!captureOnMax || !captureOnMax.checked) return;
     // throttle: at most one capture per 800ms to reduce load
     if (nowTs - lastShotAt < 800) return;
     lastShotAt = nowTs;
@@ -287,8 +282,8 @@ export default function initApp() {
   stopLiveBtn.addEventListener('click', () => stopLive());
 
   // File video processing
-  let fileSeries: Array<{ t: number; px: number; mCal: number; mWorld: number; pt: any; pt3D: any }> = [];
-  let fileMax = { px: 0, mCal: 0, mWorld: 0, at: 0 };
+  let fileSeries: Array<{ t: number; mWorld: number; pt3D: any }> = [];
+  let fileMax = { mWorld: 0, at: 0 };
 
   fileInput.addEventListener('change', async (e) => {
     const f = (e.target as HTMLInputElement).files?.[0];
@@ -300,8 +295,9 @@ export default function initApp() {
   fileVideo.addEventListener('play', async () => {
     await ensurePoseLoaded();
     setRunningMode('VIDEO');
-    fileSeries = [];
-    fileMax = { px: 0, mCal: 0, mWorld: 0, at: 0 };
+  fileSeries = [];
+  fileMax = { mWorld: 0, at: 0 };
+  fileEmaM3D = null;
     processFileVideo();
   });
 
@@ -323,40 +319,26 @@ export default function initApp() {
       const isHand = typeof target === 'string' && target.includes('hand');
       const key2D = isHand ? ('index' as const) : ('foot_index' as const);
       const fallback2D = isHand ? ('wrist' as const) : ('ankle' as const);
-      const foot2D = landmarkBySide(result.landmarks, side, key2D) || landmarkBySide(result.landmarks, side, fallback2D);
       const foot3D = result.worldLandmarks ? (worldLandmarkBySide(result.worldLandmarks, side, key2D) || worldLandmarkBySide(result.worldLandmarks, side, fallback2D)) : null;
-      if (foot2D || foot3D) {
-        const curr = foot2D ? { x: foot2D.x * fileCanvas.width, y: foot2D.y * fileCanvas.height, t: ts } : null;
-        const curr3D = foot3D ? { x: foot3D.x, y: foot3D.y, z: foot3D.z, t: ts } : null;
+      if (foot3D) {
+        const curr3D = { x: foot3D.x, y: foot3D.y, z: foot3D.z, t: ts };
         const n = fileSeries.length;
-        let px = 0, mCal = 0, mWorld = 0;
+        let mWorld = 0;
         if (n > 0) {
-          const prev = fileSeries[n - 1].pt;
           const prev3D = fileSeries[n - 1].pt3D;
-          const dt = curr && prev ? (curr.t - prev.t) / 1000 : (curr3D && prev3D ? (curr3D.t - prev3D.t) / 1000 : 0);
-          const mpp = parseFloat(metersPerPixelInput.value) || 0;
-          if (curr && prev) {
-            const sp = computeSpeed(prev, curr, dt, mpp);
-            px = sp.pxPerSec; mCal = sp.mPerSec;
-            if (px > fileMax.px) { fileMax.px = px; fileMax.at = fileVideo.currentTime; }
-            if (mCal > fileMax.mCal) { fileMax.mCal = mCal; }
-            const vel = dt > 0 ? { x: (curr.x - prev.x) / dt, y: (curr.y - prev.y) / dt } : { x: 0, y: 0 };
-            const label = useWorld3D.checked
-              ? (mWorld ? `${mWorld.toFixed(2)} m/s` : '')
-              : (mpp > 0 && mCal ? `${mCal.toFixed(2)} m/s` : `${px.toFixed(0)} px/s`);
-            drawFootOverlay(ctx, curr, vel, label);
-          }
-          if (curr3D && prev3D && dt > 0) {
+          const dt = prev3D ? (curr3D.t - prev3D.t) / 1000 : 0;
+          if (prev3D && dt > 0) {
             mWorld = computeSpeed3D(prev3D, curr3D, dt);
-            if (mWorld > fileMax.mWorld) { fileMax.mWorld = mWorld; }
+            const alpha = clamp(parseFloat(emaAlphaInput?.value || '') || 0.3, 0, 1);
+            fileEmaM3D = ema(fileEmaM3D, mWorld, alpha);
+            const smoothed = fileEmaM3D ?? mWorld;
+            if (smoothed > fileMax.mWorld) { fileMax.mWorld = smoothed; fileMax.at = fileVideo.currentTime; }
+            mWorld = smoothed;
           }
         }
-        fileSeries.push({ t: ts / 1000, px, mCal, mWorld, pt: curr, pt3D: curr3D });
-        fileSpeedPxEl.textContent = px.toFixed(1);
-        const use3D = useWorld3D.checked;
-        fileSpeedMEl.textContent = use3D ? (mWorld ? mWorld.toFixed(2) : '-') : ((parseFloat(metersPerPixelInput.value) > 0 && mCal) ? mCal.toFixed(2) : '-');
-        fileMaxPxEl.textContent = fileMax.px ? fileMax.px.toFixed(1) : '-';
-        fileMaxMEl.textContent = use3D ? (fileMax.mWorld ? fileMax.mWorld.toFixed(2) : '-') : ((parseFloat(metersPerPixelInput.value) > 0 && fileMax.mCal) ? fileMax.mCal.toFixed(2) : '-');
+        fileSeries.push({ t: ts / 1000, mWorld, pt3D: curr3D });
+        fileSpeedMEl.textContent = mWorld ? mWorld.toFixed(2) : '-';
+        fileMaxMEl.textContent = fileMax.mWorld ? fileMax.mWorld.toFixed(2) : '-';
         fileMaxAtEl.textContent = fileMax.at ? fileMax.at.toFixed(2) + 's' : '-';
         updateFileChart();
       }
@@ -368,8 +350,6 @@ export default function initApp() {
 
   function updateFileChart() {
     const labels = fileSeries.map(d => d.t);
-    const px = fileSeries.map(d => d.px);
-    const mCal = fileSeries.map(d => d.mCal);
     const mWorld = fileSeries.map(d => d.mWorld);
     if (!fileChart) {
       const ctx = (document.getElementById('fileChart') as HTMLCanvasElement).getContext('2d')!;
@@ -378,31 +358,20 @@ export default function initApp() {
         data: {
           labels,
           datasets: [
-            { label: '速度(px/s)', data: px, borderColor: '#4da3ff', tension: 0.2 },
-            { label: '速度(m/s, cal)', data: mCal, borderColor: '#38c172', tension: 0.2, yAxisID: 'y1' },
-            { label: '速度(m/s, 3D)', data: mWorld, borderColor: '#ff7ab6', tension: 0.2, yAxisID: 'y1' }
+            { label: '速度(m/s, 3D)', data: mWorld, borderColor: '#ff7ab6', tension: 0.2 }
           ]
         },
         options: {
           responsive: true,
           interaction: { mode: 'index', intersect: false },
           scales: {
-            y: { type: 'linear', position: 'left', title: { display: true, text: 'px/s' } },
-            y1: { type: 'linear', position: 'right', title: { display: true, text: 'm/s' }, grid: { drawOnChartArea: false } }
+            y: { type: 'linear', position: 'left', title: { display: true, text: 'm/s' } }
           }
         }
       });
     } else {
       fileChart.data.labels = labels as any;
-      fileChart.data.datasets[0].data = px as any;
-      (fileChart.data.datasets[1] as any).data = mCal as any;
-      (fileChart.data.datasets[2] as any).data = mWorld as any;
-      fileChart.update('none');
-    }
-    if (fileChart) {
-      const use3D = useWorld3D.checked;
-      (fileChart.data.datasets[1] as any).hidden = use3D;
-      (fileChart.data.datasets[2] as any).hidden = !use3D;
+      (fileChart.data.datasets[0] as any).data = mWorld as any;
       fileChart.update('none');
     }
   }
@@ -426,7 +395,9 @@ export default function initApp() {
       videoEl.addEventListener('play', onPlay);
       videoEl.addEventListener('ended', onEnded);
       if (!videoEl.paused) onPlay();
-      let prevPt: { x: number; y: number; t: number } | null = null;
+  let prevPt: { x: number; y: number; t: number } | null = null;
+  let prev3D: { x: number; y: number; z?: number; t: number } | null = null;
+  let ema3D: number | null = null;
       const side: 'left' | 'right' = (target.startsWith('left') ? 'left' : (target.startsWith('right') ? 'right' : (target as any)));
       const isHand = typeof target === 'string' && target.includes('hand');
       const key2D = isHand ? ('index' as const) : ('foot_index' as const);
@@ -445,18 +416,25 @@ export default function initApp() {
         if (res && res.landmarks && res.landmarks.length) {
           drawPose(ctx, res.landmarks);
           const foot = landmarkBySide(res.landmarks, side, key2D) || landmarkBySide(res.landmarks, side, fallback2D);
+          const footW = res.worldLandmarks ? (worldLandmarkBySide(res.worldLandmarks, side, key2D) || worldLandmarkBySide(res.worldLandmarks, side, fallback2D)) : null;
           const kneeDeg = kneeAngle(res.landmarks, side);
           if (foot) {
             const curr = { x: foot.x * canvasEl.width, y: foot.y * canvasEl.height, t: ts };
-            let spx = 0;
-            if (prevPt) {
-              const dt = (curr.t - prevPt.t) / 1000;
-              spx = computeSpeed(prevPt, curr, dt, 0).pxPerSec;
+            let mps = 0;
+            if (footW && prev3D) {
+              const dt = (ts - prev3D.t) / 1000;
+              if (dt > 0) {
+                mps = computeSpeed3D(prev3D, { x: footW.x, y: footW.y, z: footW.z, t: ts }, dt);
+                const alpha = clamp(parseFloat(emaAlphaInput?.value || '') || 0.3, 0, 1);
+                ema3D = ema(ema3D, mps, alpha);
+                mps = ema3D ?? mps;
+              }
             }
             series.t.push(ts / 1000);
-            (series.speed as number[]).push(spx);
+            (series.speed as number[]).push(mps);
             (series.knee as number[]).push(kneeDeg);
             prevPt = curr;
+            if (footW) prev3D = { x: footW.x, y: footW.y, z: footW.z, t: ts };
           }
         }
         requestAnimationFrame(step);
@@ -497,8 +475,8 @@ export default function initApp() {
         data: {
           labels,
           datasets: [
-            { label: 'お手本 速度(px/s)', data: refR.speed, borderColor: '#4da3ff', tension: 0.2 },
-            { label: '自分 速度(px/s)', data: usrR.speed, borderColor: '#ff7ab6', tension: 0.2 },
+            { label: 'お手本 速度(m/s)', data: refR.speed, borderColor: '#4da3ff', tension: 0.2 },
+            { label: '自分 速度(m/s)', data: usrR.speed, borderColor: '#ff7ab6', tension: 0.2 },
             { label: 'お手本 膝角(°)', data: refR.knee, borderColor: '#38c172', tension: 0.2, yAxisID: 'y1' },
             { label: '自分 膝角(°)', data: usrR.knee, borderColor: '#ffd166', tension: 0.2, yAxisID: 'y1' }
           ]
@@ -507,7 +485,7 @@ export default function initApp() {
           responsive: true,
           interaction: { mode: 'index', intersect: false },
           scales: {
-            y: { type: 'linear', position: 'left', title: { display: true, text: 'px/s' } },
+            y: { type: 'linear', position: 'left', title: { display: true, text: 'm/s' } },
             y1: { type: 'linear', position: 'right', title: { display: true, text: '角度(°)' }, grid: { drawOnChartArea: false } }
           }
         }
