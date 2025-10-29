@@ -26,10 +26,12 @@ export default function Page() {
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 items-start">
           <label className="grid gap-1 text-gray-700">
-            フット（足）:
+            測定部位:
             <select id="footSelect" className="border rounded px-2 py-2">
-              <option value="right">右</option>
-              <option value="left">左</option>
+              <option value="right_foot">右足</option>
+              <option value="left_foot">左足</option>
+              <option value="right_hand">右手</option>
+              <option value="left_hand">左手</option>
             </select>
           </label>
           <label className="grid gap-1 text-gray-700" title="m/px 推定。正確にしたい場合は校正してください。">

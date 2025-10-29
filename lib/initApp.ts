@@ -182,9 +182,14 @@ export default function initApp() {
       resizeCanvasToVideo(liveCanvas, liveVideo);
       if (result && result.landmarks && result.landmarks.length) {
         drawPose(ctx, result.landmarks);
-        const side = (footSelect.value as 'left' | 'right');
-        const foot2D = landmarkBySide(result.landmarks, side, 'foot_index') || landmarkBySide(result.landmarks, side, 'ankle');
-        const foot3D = result.worldLandmarks ? (worldLandmarkBySide(result.worldLandmarks, side, 'foot_index') || worldLandmarkBySide(result.worldLandmarks, side, 'ankle')) : null;
+        const target = (footSelect.value as 'left_foot' | 'right_foot' | 'left_hand' | 'right_hand' | 'left' | 'right');
+        // Backward-compat: if value is just 'left'|'right', treat as foot
+        const side: 'left' | 'right' = (target.startsWith('left') ? 'left' : (target.startsWith('right') ? 'right' : (target as any)));
+        const isHand = typeof target === 'string' && target.includes('hand');
+        const key2D = isHand ? ('index' as const) : ('foot_index' as const);
+        const fallback2D = isHand ? ('wrist' as const) : ('ankle' as const);
+        const foot2D = landmarkBySide(result.landmarks, side, key2D) || landmarkBySide(result.landmarks, side, fallback2D);
+        const foot3D = result.worldLandmarks ? (worldLandmarkBySide(result.worldLandmarks, side, key2D) || worldLandmarkBySide(result.worldLandmarks, side, fallback2D)) : null;
         if (foot2D) {
           const curr = { x: foot2D.x * liveCanvas.width, y: foot2D.y * liveCanvas.height, t: now };
           if (livePrev) {
@@ -313,9 +318,13 @@ export default function initApp() {
     resizeCanvasToVideo(fileCanvas, fileVideo);
     if (result && result.landmarks && result.landmarks.length) {
       drawPose(ctx, result.landmarks);
-      const side = (footSelect.value as 'left' | 'right');
-      const foot2D = landmarkBySide(result.landmarks, side, 'foot_index') || landmarkBySide(result.landmarks, side, 'ankle');
-      const foot3D = result.worldLandmarks ? (worldLandmarkBySide(result.worldLandmarks, side, 'foot_index') || worldLandmarkBySide(result.worldLandmarks, side, 'ankle')) : null;
+      const target = (footSelect.value as 'left_foot' | 'right_foot' | 'left_hand' | 'right_hand' | 'left' | 'right');
+      const side: 'left' | 'right' = (target.startsWith('left') ? 'left' : (target.startsWith('right') ? 'right' : (target as any)));
+      const isHand = typeof target === 'string' && target.includes('hand');
+      const key2D = isHand ? ('index' as const) : ('foot_index' as const);
+      const fallback2D = isHand ? ('wrist' as const) : ('ankle' as const);
+      const foot2D = landmarkBySide(result.landmarks, side, key2D) || landmarkBySide(result.landmarks, side, fallback2D);
+      const foot3D = result.worldLandmarks ? (worldLandmarkBySide(result.worldLandmarks, side, key2D) || worldLandmarkBySide(result.worldLandmarks, side, fallback2D)) : null;
       if (foot2D || foot3D) {
         const curr = foot2D ? { x: foot2D.x * fileCanvas.width, y: foot2D.y * fileCanvas.height, t: ts } : null;
         const curr3D = foot3D ? { x: foot3D.x, y: foot3D.y, z: foot3D.z, t: ts } : null;
@@ -399,7 +408,11 @@ export default function initApp() {
   }
 
   // Compare helpers
-  async function extractSeriesFromVideo(videoEl: HTMLVideoElement, side: 'left' | 'right', canvasEl: HTMLCanvasElement) {
+  async function extractSeriesFromVideo(
+    videoEl: HTMLVideoElement,
+    target: 'left_foot' | 'right_foot' | 'left_hand' | 'right_hand' | 'left' | 'right',
+    canvasEl: HTMLCanvasElement
+  ) {
     await ensurePoseLoaded();
     setRunningMode('VIDEO');
     return new Promise<{ t: number[]; speed: number[]; knee: number[] }>((resolve) => {
@@ -414,6 +427,10 @@ export default function initApp() {
       videoEl.addEventListener('ended', onEnded);
       if (!videoEl.paused) onPlay();
       let prevPt: { x: number; y: number; t: number } | null = null;
+      const side: 'left' | 'right' = (target.startsWith('left') ? 'left' : (target.startsWith('right') ? 'right' : (target as any)));
+      const isHand = typeof target === 'string' && target.includes('hand');
+      const key2D = isHand ? ('index' as const) : ('foot_index' as const);
+      const fallback2D = isHand ? ('wrist' as const) : ('ankle' as const);
       const step = () => {
         if (videoEl.paused || videoEl.ended) return;
         // 寸法が 0 のうちはスキップ
@@ -427,7 +444,7 @@ export default function initApp() {
         resizeCanvasToVideo(canvasEl, videoEl);
         if (res && res.landmarks && res.landmarks.length) {
           drawPose(ctx, res.landmarks);
-          const foot = landmarkBySide(res.landmarks, side, 'foot_index') || landmarkBySide(res.landmarks, side, 'ankle');
+          const foot = landmarkBySide(res.landmarks, side, key2D) || landmarkBySide(res.landmarks, side, fallback2D);
           const kneeDeg = kneeAngle(res.landmarks, side);
           if (foot) {
             const curr = { x: foot.x * canvasEl.width, y: foot.y * canvasEl.height, t: ts };
@@ -516,9 +533,9 @@ export default function initApp() {
     if (!f) return; usrVideo.src = URL.createObjectURL(f);
   });
   async function runCompare() {
-    const side = (footSelect.value as 'left' | 'right');
-    if (refVideo.src) { refVideo.currentTime = 0; await refVideo.play(); refSeries = await extractSeriesFromVideo(refVideo, side, refCanvas); }
-    if (usrVideo.src) { usrVideo.currentTime = 0; await usrVideo.play(); usrSeries = await extractSeriesFromVideo(usrVideo, side, usrCanvas); }
+    const target = (footSelect.value as 'left_foot' | 'right_foot' | 'left_hand' | 'right_hand' | 'left' | 'right');
+    if (refVideo.src) { refVideo.currentTime = 0; await refVideo.play(); refSeries = await extractSeriesFromVideo(refVideo, target, refCanvas); }
+    if (usrVideo.src) { usrVideo.currentTime = 0; await usrVideo.play(); usrSeries = await extractSeriesFromVideo(usrVideo, target, usrCanvas); }
     if (refSeries && usrSeries) updateCompareChart(refSeries, usrSeries);
   }
   [refVideo, usrVideo].forEach(v => v?.addEventListener('ended', () => {

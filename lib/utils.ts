@@ -62,24 +62,32 @@ export function pearson(x: number[], y: number[]): number {
   return cov / Math.sqrt(vx * vy);
 }
 
-export function landmarkBySide(landmarks: Landmarks2D | null | undefined, side: Side, key: 'ankle' | 'foot_index') {
+export function landmarkBySide(
+  landmarks: Landmarks2D | null | undefined,
+  side: Side,
+  key: 'ankle' | 'foot_index' | 'wrist' | 'index'
+) {
   if (!landmarks || !landmarks[0]) return null;
   const lm = landmarks[0];
-  const map: Record<Side, Record<'ankle' | 'foot_index', number>> = {
-    left: { ankle: 27, foot_index: 31 },
-    right: { ankle: 28, foot_index: 32 }
+  const map: Record<Side, Record<'ankle' | 'foot_index' | 'wrist' | 'index', number>> = {
+    left: { ankle: 27, foot_index: 31, wrist: 15, index: 19 },
+    right: { ankle: 28, foot_index: 32, wrist: 16, index: 20 }
   };
   const idx = map[side]?.[key];
   if (idx == null || !lm[idx]) return null;
   return lm[idx];
 }
 
-export function worldLandmarkBySide(worldLandmarks: Landmarks3D | null | undefined, side: Side, key: 'ankle' | 'foot_index') {
+export function worldLandmarkBySide(
+  worldLandmarks: Landmarks3D | null | undefined,
+  side: Side,
+  key: 'ankle' | 'foot_index' | 'wrist' | 'index'
+) {
   if (!worldLandmarks || !worldLandmarks[0]) return null;
   const lm = worldLandmarks[0];
-  const map: Record<Side, Record<'ankle' | 'foot_index', number>> = {
-    left: { ankle: 27, foot_index: 31 },
-    right: { ankle: 28, foot_index: 32 }
+  const map: Record<Side, Record<'ankle' | 'foot_index' | 'wrist' | 'index', number>> = {
+    left: { ankle: 27, foot_index: 31, wrist: 15, index: 19 },
+    right: { ankle: 28, foot_index: 32, wrist: 16, index: 20 }
   };
   const idx = map[side]?.[key];
   if (idx == null || !lm[idx]) return null;
