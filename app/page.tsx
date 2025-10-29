@@ -39,6 +39,13 @@ export default function Page() {
             平滑化係数 α (0:平滑化なし, 0.05:滑らか-1:敏感):
             <input id="emaAlpha" type="number" min={0} max={1} step={0.05} defaultValue={0.3} className="border rounded px-2 py-2" />
           </label>
+          <label className="grid gap-1 text-gray-700" title="最大記録とスクショの基準 (絶対: 世界座標, 相対: 重心基準)">
+            速度の基準:
+            <select id="speedBasis" className="border rounded px-2 py-2">
+              <option value="absolute">絶対（世界座標）</option>
+              <option value="relative">相対（重心基準）</option>
+            </select>
+          </label>
           {/* スクショ閾値は負荷影響が小さいため撤去（最大更新時のみ保存） */}
           {/* モデル選択は廃止（シンプル化） */}
         </div>
@@ -54,8 +61,8 @@ export default function Page() {
             </div>
             <div className="border rounded p-3 bg-white">
               <h3 className="m-0 mb-2 text-base">速度 (3D m/s)</h3>
-              <div className="flex justify-between py-1 border-b border-dashed"><span>現在(m/s):</span><strong id="liveSpeedM">-</strong></div>
-              <div className="flex justify-between py-1"><span>最大(m/s):</span><strong id="liveMaxM">-</strong></div>
+              <div className="flex justify-between py-1 border-b border-dashed"><span>現在(選択基準):</span><strong id="liveSpeedM">-</strong></div>
+              <div className="flex justify-between py-1"><span>最大(選択基準):</span><strong id="liveMaxM">-</strong></div>
               <div className="mt-3 flex flex-col gap-2">
                 <div className="flex items-center gap-2">
                   <input id="captureOnMax" type="checkbox" />

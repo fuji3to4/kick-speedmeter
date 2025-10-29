@@ -11,6 +11,8 @@ export default function initApp() {
   const resetMaxBtn = document.getElementById('resetMax') as HTMLButtonElement;
   // 3D専用に簡素化したため、m/pxや2D切替はなし
   const emaAlphaInput = document.getElementById('emaAlpha') as HTMLInputElement | null;
+  const speedBasisSelect = document.getElementById('speedBasis') as HTMLSelectElement | null;
+  const CAPTURE_THRESHOLD = 1.0; // m/s: screenshots only when above this speed
 
   // Live
   const startLiveBtn = document.getElementById('startLive') as HTMLButtonElement;
@@ -49,8 +51,14 @@ export default function initApp() {
   let liveReqId: number | null = null;
   let livePrev: { x: number; y: number; t: number } | null = null;
   let livePrev3D: { x: number; y: number; z?: number; t: number } | null = null;
-  let liveEmaM3D: number | null = null;
-  let liveMaxM = 0;
+  let livePrevCoM3D: { x: number; y: number; z?: number; t: number } | null = null;
+  let livePrevRel3D: { x: number; y: number; z?: number; t: number } | null = null;
+  let liveEmaAbsM3D: number | null = null;
+  let liveEmaRelM3D: number | null = null;
+  let liveEmaCoMM3D: number | null = null;
+  let liveMaxAbsM = 0;
+  let liveMaxRelM = 0;
+  let liveMaxCoMM = 0;
   let stream: MediaStream | null = null;
   let isLiveActive = false;
   let lastShotUrl: string | null = null;
@@ -101,8 +109,8 @@ export default function initApp() {
   }));
 
   resetMaxBtn.addEventListener('click', () => {
-  liveMaxM = 0;
-    liveMaxMEl.textContent = '-';
+  liveMaxAbsM = 0; liveMaxRelM = 0; liveMaxCoMM = 0;
+  liveMaxMEl.textContent = '-';
     fileMaxMEl.textContent = '-';
     fileMaxAtEl.textContent = '-';
     if (lastShotUrl) { try { URL.revokeObjectURL(lastShotUrl); } catch {} }
@@ -147,9 +155,9 @@ export default function initApp() {
     });
     await liveVideo.play();
     resizeCanvasToVideo(liveCanvas, liveVideo);
-  livePrev = null; livePrev3D = null;
-  liveEmaM3D = null;
-  liveMaxM = 0;
+  livePrev = null; livePrev3D = null; livePrevCoM3D = null; livePrevRel3D = null;
+  liveEmaAbsM3D = null; liveEmaRelM3D = null; liveEmaCoMM3D = null;
+  liveMaxAbsM = 0; liveMaxRelM = 0; liveMaxCoMM = 0;
     startLiveBtn.disabled = true; stopLiveBtn.disabled = false;
     isLiveActive = true;
     attachStreamHandlers(stream);
@@ -197,35 +205,77 @@ export default function initApp() {
           }
           livePrev = curr;
         }
-        if (foot3D) {
-          const curr3D = { x: foot3D.x, y: foot3D.y, z: foot3D.z, t: now };
-          if (livePrev3D) {
-            const dt = (curr3D.t - livePrev3D.t) / 1000;
-            const mps = computeSpeed3D(livePrev3D, curr3D, dt);
-            const alpha = clamp(parseFloat(emaAlphaInput?.value || '') || 0.3, 0, 1);
-            liveEmaM3D = ema(liveEmaM3D, mps, alpha);
-            const smoothed = liveEmaM3D ?? 0;
-            liveSpeedMEl.textContent = smoothed.toFixed(2);
-            let needCapture = false;
-            if (smoothed > liveMaxM) {
-              liveMaxM = smoothed;
-              liveMaxMEl.textContent = liveMaxM.toFixed(2);
-              const displayRounded = Number(liveMaxM.toFixed(2));
-              if (displayRounded > lastCapturedDisplayM) {
-                needCapture = true;
-                lastCapturedDisplayM = displayRounded;
+        if (result.worldLandmarks) {
+          // Center of Mass (simple mean of all 3D landmarks in pose 0)
+          const lm = result.worldLandmarks[0];
+          if (lm && lm.length > 0) {
+            let sx = 0, sy = 0, sz = 0, n = 0;
+            for (let i = 0; i < lm.length; i++) {
+              const p = lm[i]; if (!p) continue;
+              sx += p.x; sy += p.y; sz += (p.z ?? 0); n++;
+            }
+            if (n > 0) {
+              const currCoM = { x: sx / n, y: sy / n, z: sz / n, t: now };
+              if (livePrevCoM3D) {
+                const dtc = (currCoM.t - livePrevCoM3D.t) / 1000;
+                const mpsCoM = computeSpeed3D(livePrevCoM3D, currCoM, dtc);
+                const alpha = clamp(parseFloat(emaAlphaInput?.value || '') || 0.3, 0, 1);
+                liveEmaCoMM3D = ema(liveEmaCoMM3D, mpsCoM, alpha);
+                const smCoM = liveEmaCoMM3D ?? 0;
+                if (smCoM > liveMaxCoMM) { liveMaxCoMM = smCoM; }
+              }
+              livePrevCoM3D = currCoM;
+              // Relative speed for target (foot3D relative to CoM)
+              if (foot3D) {
+                const curr3D = { x: foot3D.x, y: foot3D.y, z: foot3D.z, t: now };
+                if (livePrev3D) {
+                  const dt = (curr3D.t - livePrev3D.t) / 1000;
+                  const mpsAbs = computeSpeed3D(livePrev3D, curr3D, dt);
+                  const alpha = clamp(parseFloat(emaAlphaInput?.value || '') || 0.3, 0, 1);
+                  liveEmaAbsM3D = ema(liveEmaAbsM3D, mpsAbs, alpha);
+                }
+                // relative positions (use current CoM for current frame)
+                const currRel = { x: curr3D.x - currCoM.x, y: curr3D.y - currCoM.y, z: (curr3D.z ?? 0) - (currCoM.z ?? 0), t: now };
+                if (livePrevRel3D) {
+                  const dtr = (currRel.t - livePrevRel3D.t) / 1000;
+                  const mpsRel = computeSpeed3D(livePrevRel3D, currRel, dtr);
+                  const alpha = clamp(parseFloat(emaAlphaInput?.value || '') || 0.3, 0, 1);
+                  liveEmaRelM3D = ema(liveEmaRelM3D, mpsRel, alpha);
+                }
+                // Update prevs
+                livePrevRel3D = currRel;
+                livePrev3D = curr3D;
+
+                // Resolve smoothed values
+                const smAbs = liveEmaAbsM3D ?? 0;
+                const smRel = liveEmaRelM3D ?? 0;
+                // Update per-metric current displays
+                // Update maxima (absolute/relative)
+                if (smAbs > liveMaxAbsM) { liveMaxAbsM = smAbs; }
+                if (smRel > liveMaxRelM) { liveMaxRelM = smRel; }
+
+                // Selected basis for main display and capture
+                const basis = (speedBasisSelect?.value === 'relative') ? 'relative' : 'absolute';
+                const currForDisplay = basis === 'relative' ? smRel : smAbs;
+                const maxForDisplay = basis === 'relative' ? liveMaxRelM : liveMaxAbsM;
+                liveSpeedMEl.textContent = currForDisplay.toFixed(2);
+                liveMaxMEl.textContent = maxForDisplay > 0 ? maxForDisplay.toFixed(2) : '-';
+
+                // Draw overlay label using the selected basis
+                if (overlayPos) {
+                  const label = `${currForDisplay.toFixed(2)} m/s`;
+                  drawFootOverlay(ctx, overlayPos, overlayVel, label);
+                }
+
+                // Capture gating based on selected basis and rounded display
+                const displayRounded = Number(currForDisplay.toFixed(2));
+                if (displayRounded > lastCapturedDisplayM && currForDisplay >= CAPTURE_THRESHOLD) {
+                  lastCapturedDisplayM = displayRounded;
+                  maybeCapture(now);
+                }
               }
             }
-            // Draw overlay for this frame with the just-updated smoothed value
-            if (overlayPos) {
-              const label = `${smoothed.toFixed(2)} m/s`;
-              drawFootOverlay(ctx, overlayPos, overlayVel, label);
-            }
-            if (needCapture) {
-              maybeCapture(now);
-            }
           }
-          livePrev3D = curr3D;
         }
       } else {
         const ctx = liveCanvas.getContext('2d')!;
