@@ -34,7 +34,6 @@ export default function initApp() {
   const fileMaxMEl = document.getElementById('fileMaxM') as HTMLElement;
   const fileMaxAtEl = document.getElementById('fileMaxAt') as HTMLElement;
   let fileChart: Chart | undefined;
-  let fileEmaM3D: number | null = null;
 
   // Compare
   const refInput = document.getElementById('refVideoFile') as HTMLInputElement | null;
@@ -332,8 +331,13 @@ export default function initApp() {
   stopLiveBtn.addEventListener('click', () => stopLive());
 
   // File video processing
-  let fileSeries: Array<{ t: number; mWorld: number; pt3D: any }> = [];
-  let fileMax = { mWorld: 0, at: 0 };
+  let fileSeries: Array<{ t: number; mAbs: number; mRel: number; mCoM: number }> = [];
+  let filePrev3D: { x: number; y: number; z?: number; t: number } | null = null;
+  let filePrevCoM3D: { x: number; y: number; z?: number; t: number } | null = null;
+  let filePrevRel3D: { x: number; y: number; z?: number; t: number } | null = null;
+  let fileEmaAbs: number | null = null, fileEmaRel: number | null = null, fileEmaCoM: number | null = null;
+  let fileMaxAbs = 0, fileMaxRel = 0;
+  let fileMaxAbsAt = 0, fileMaxRelAt = 0;
 
   fileInput.addEventListener('change', async (e) => {
     const f = (e.target as HTMLInputElement).files?.[0];
@@ -345,10 +349,26 @@ export default function initApp() {
   fileVideo.addEventListener('play', async () => {
     await ensurePoseLoaded();
     setRunningMode('VIDEO');
-  fileSeries = [];
-  fileMax = { mWorld: 0, at: 0 };
-  fileEmaM3D = null;
+    fileSeries = [];
+    filePrev3D = null; filePrevCoM3D = null; filePrevRel3D = null;
+    fileEmaAbs = null; fileEmaRel = null; fileEmaCoM = null;
+    fileMaxAbs = 0; fileMaxRel = 0; fileMaxAbsAt = 0; fileMaxRelAt = 0;
     processFileVideo();
+  });
+
+  // Reflect basis change immediately in Video tab displays and chart
+  speedBasisSelect?.addEventListener('change', () => {
+    const basis = (speedBasisSelect?.value === 'relative') ? 'relative' : 'absolute';
+    if (fileSeries.length > 0) {
+      const last = fileSeries[fileSeries.length - 1];
+      const currSel = basis === 'relative' ? last.mRel : last.mAbs;
+      const maxSel = basis === 'relative' ? fileMaxRel : fileMaxAbs;
+      const atSel = basis === 'relative' ? fileMaxRelAt : fileMaxAbsAt;
+      fileSpeedMEl.textContent = currSel ? currSel.toFixed(2) : '-';
+      fileMaxMEl.textContent = maxSel ? maxSel.toFixed(2) : '-';
+      fileMaxAtEl.textContent = atSel ? atSel.toFixed(2) + 's' : '-';
+    }
+    updateFileChart();
   });
 
   function processFileVideo() {
@@ -370,27 +390,62 @@ export default function initApp() {
       const key2D = isHand ? ('index' as const) : ('foot_index' as const);
       const fallback2D = isHand ? ('wrist' as const) : ('ankle' as const);
       const foot3D = result.worldLandmarks ? (worldLandmarkBySide(result.worldLandmarks, side, key2D) || worldLandmarkBySide(result.worldLandmarks, side, fallback2D)) : null;
-      if (foot3D) {
-        const curr3D = { x: foot3D.x, y: foot3D.y, z: foot3D.z, t: ts };
-        const n = fileSeries.length;
-        let mWorld = 0;
+      const lm = result.worldLandmarks?.[0];
+      if (foot3D && lm && lm.length) {
+        // CoM (simple mean)
+        let sx = 0, sy = 0, sz = 0, n = 0;
+        for (let i = 0; i < lm.length; i++) { const p = lm[i]; if (!p) continue; sx += p.x; sy += p.y; sz += (p.z ?? 0); n++; }
         if (n > 0) {
-          const prev3D = fileSeries[n - 1].pt3D;
-          const dt = prev3D ? (curr3D.t - prev3D.t) / 1000 : 0;
-          if (prev3D && dt > 0) {
-            mWorld = computeSpeed3D(prev3D, curr3D, dt);
-            const alpha = clamp(parseFloat(emaAlphaInput?.value || '') || 0.3, 0, 1);
-            fileEmaM3D = ema(fileEmaM3D, mWorld, alpha);
-            const smoothed = fileEmaM3D ?? mWorld;
-            if (smoothed > fileMax.mWorld) { fileMax.mWorld = smoothed; fileMax.at = fileVideo.currentTime; }
-            mWorld = smoothed;
+          const currCoM = { x: sx / n, y: sy / n, z: sz / n, t: ts };
+          const curr3D = { x: foot3D.x, y: foot3D.y, z: foot3D.z, t: ts };
+          // Absolute speed
+          let smAbs = 0, smRel = 0, smCoM = 0;
+          const alpha = clamp(parseFloat(emaAlphaInput?.value || '') || 0.3, 0, 1);
+          if (filePrev3D) {
+            const dt = (curr3D.t - filePrev3D.t) / 1000;
+            if (dt > 0) {
+              const mAbs = computeSpeed3D(filePrev3D, curr3D, dt);
+              fileEmaAbs = ema(fileEmaAbs, mAbs, alpha);
+              smAbs = fileEmaAbs ?? 0;
+            }
           }
+          // CoM speed
+          if (filePrevCoM3D) {
+            const dtc = (currCoM.t - filePrevCoM3D.t) / 1000;
+            if (dtc > 0) {
+              const mCoM = computeSpeed3D(filePrevCoM3D, currCoM, dtc);
+              fileEmaCoM = ema(fileEmaCoM, mCoM, alpha);
+              smCoM = fileEmaCoM ?? 0;
+            }
+          }
+          // Relative speed (using current CoM for current frame)
+          const currRel = { x: curr3D.x - currCoM.x, y: curr3D.y - currCoM.y, z: (curr3D.z ?? 0) - (currCoM.z ?? 0), t: ts };
+          if (filePrevRel3D) {
+            const dtr = (currRel.t - filePrevRel3D.t) / 1000;
+            if (dtr > 0) {
+              const mRel = computeSpeed3D(filePrevRel3D, currRel, dtr);
+              fileEmaRel = ema(fileEmaRel, mRel, alpha);
+              smRel = fileEmaRel ?? 0;
+            }
+          }
+          // Update prevs
+          filePrev3D = curr3D; filePrevCoM3D = currCoM; filePrevRel3D = currRel;
+
+          // Update maxima and UI based on selected basis
+          if (smAbs > fileMaxAbs) { fileMaxAbs = smAbs; fileMaxAbsAt = fileVideo.currentTime; }
+          if (smRel > fileMaxRel) { fileMaxRel = smRel; fileMaxRelAt = fileVideo.currentTime; }
+          const basis = (speedBasisSelect?.value === 'relative') ? 'relative' : 'absolute';
+          const currSel = basis === 'relative' ? smRel : smAbs;
+          const maxSel = basis === 'relative' ? fileMaxRel : fileMaxAbs;
+          const atSel = basis === 'relative' ? fileMaxRelAt : fileMaxAbsAt;
+          fileSpeedMEl.textContent = currSel ? currSel.toFixed(2) : '-';
+          fileMaxMEl.textContent = maxSel ? maxSel.toFixed(2) : '-';
+          fileMaxAtEl.textContent = atSel ? atSel.toFixed(2) + 's' : '-';
+
+          // Push to series for chart
+          fileSeries.push({ t: ts / 1000, mAbs: smAbs, mRel: smRel, mCoM: smCoM });
+          updateFileChart();
         }
-        fileSeries.push({ t: ts / 1000, mWorld, pt3D: curr3D });
-        fileSpeedMEl.textContent = mWorld ? mWorld.toFixed(2) : '-';
-        fileMaxMEl.textContent = fileMax.mWorld ? fileMax.mWorld.toFixed(2) : '-';
-        fileMaxAtEl.textContent = fileMax.at ? fileMax.at.toFixed(2) + 's' : '-';
-        updateFileChart();
       }
     } else {
       ctx.clearRect(0, 0, fileCanvas.width, fileCanvas.height);
@@ -400,7 +455,9 @@ export default function initApp() {
 
   function updateFileChart() {
     const labels = fileSeries.map(d => d.t);
-    const mWorld = fileSeries.map(d => d.mWorld);
+    const basis = (speedBasisSelect?.value === 'relative') ? 'relative' : 'absolute';
+    const dataArr = basis === 'relative' ? fileSeries.map(d => d.mRel) : fileSeries.map(d => d.mAbs);
+    const label = basis === 'relative' ? '速度(m/s, 相対)' : '速度(m/s, 絶対)';
     if (!fileChart) {
       const ctx = (document.getElementById('fileChart') as HTMLCanvasElement).getContext('2d')!;
       fileChart = new Chart(ctx, {
@@ -408,7 +465,7 @@ export default function initApp() {
         data: {
           labels,
           datasets: [
-            { label: '速度(m/s, 3D)', data: mWorld, borderColor: '#ff7ab6', tension: 0.2 }
+            { label, data: dataArr, borderColor: '#ff7ab6', tension: 0.2 }
           ]
         },
         options: {
@@ -421,7 +478,8 @@ export default function initApp() {
       });
     } else {
       fileChart.data.labels = labels as any;
-      (fileChart.data.datasets[0] as any).data = mWorld as any;
+      (fileChart.data.datasets[0] as any).data = dataArr as any;
+      (fileChart.data.datasets[0] as any).label = label;
       fileChart.update('none');
     }
   }
