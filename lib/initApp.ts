@@ -1,7 +1,7 @@
 import Chart from 'chart.js/auto';
 import { ensurePoseLoaded, processVideoFrame, setRunningMode } from './pose';
 import { drawPose, drawFootOverlay } from './draw';
-import { computeSpeed3D, ema, landmarkBySide, worldLandmarkBySide, kneeAngle, pearson, clamp } from './utils';
+import { computeSpeed3D, ema, landmarkBySide, worldLandmarkBySide, kneeAngle, pearson, clamp } from './calcu';
 
 export default function initApp() {
   // UI elements
@@ -10,7 +10,8 @@ export default function initApp() {
   const footSelect = document.getElementById('footSelect') as HTMLSelectElement;
   const resetMaxBtn = document.getElementById('resetMax') as HTMLButtonElement;
   // 3D専用に簡素化したため、m/pxや2D切替はなし
-  const emaAlphaInput = document.getElementById('emaAlpha') as HTMLInputElement | null;
+  // 平滑化係数は UI から指定せず固定値
+  const EMA_ALPHA = 0.3;
   const speedBasisSelect = document.getElementById('speedBasis') as HTMLSelectElement | null;
   const CAPTURE_THRESHOLD = 1.0; // m/s: screenshots only when above this speed
 
@@ -218,7 +219,7 @@ export default function initApp() {
               if (livePrevCoM3D) {
                 const dtc = (currCoM.t - livePrevCoM3D.t) / 1000;
                 const mpsCoM = computeSpeed3D(livePrevCoM3D, currCoM, dtc);
-                const alpha = clamp(parseFloat(emaAlphaInput?.value || '') || 0.3, 0, 1);
+                const alpha = EMA_ALPHA;
                 liveEmaCoMM3D = ema(liveEmaCoMM3D, mpsCoM, alpha);
                 const smCoM = liveEmaCoMM3D ?? 0;
                 if (smCoM > liveMaxCoMM) { liveMaxCoMM = smCoM; }
@@ -230,7 +231,7 @@ export default function initApp() {
                 if (livePrev3D) {
                   const dt = (curr3D.t - livePrev3D.t) / 1000;
                   const mpsAbs = computeSpeed3D(livePrev3D, curr3D, dt);
-                  const alpha = clamp(parseFloat(emaAlphaInput?.value || '') || 0.3, 0, 1);
+                  const alpha = EMA_ALPHA;
                   liveEmaAbsM3D = ema(liveEmaAbsM3D, mpsAbs, alpha);
                 }
                 // relative positions (use current CoM for current frame)
@@ -238,7 +239,7 @@ export default function initApp() {
                 if (livePrevRel3D) {
                   const dtr = (currRel.t - livePrevRel3D.t) / 1000;
                   const mpsRel = computeSpeed3D(livePrevRel3D, currRel, dtr);
-                  const alpha = clamp(parseFloat(emaAlphaInput?.value || '') || 0.3, 0, 1);
+                  const alpha = EMA_ALPHA;
                   liveEmaRelM3D = ema(liveEmaRelM3D, mpsRel, alpha);
                 }
                 // Update prevs
@@ -400,7 +401,7 @@ export default function initApp() {
           const curr3D = { x: foot3D.x, y: foot3D.y, z: foot3D.z, t: ts };
           // Absolute speed
           let smAbs = 0, smRel = 0, smCoM = 0;
-          const alpha = clamp(parseFloat(emaAlphaInput?.value || '') || 0.3, 0, 1);
+          const alpha = EMA_ALPHA;
           if (filePrev3D) {
             const dt = (curr3D.t - filePrev3D.t) / 1000;
             if (dt > 0) {
@@ -533,7 +534,7 @@ export default function initApp() {
               const dt = (ts - prev3D.t) / 1000;
               if (dt > 0) {
                 mps = computeSpeed3D(prev3D, { x: footW.x, y: footW.y, z: footW.z, t: ts }, dt);
-                const alpha = clamp(parseFloat(emaAlphaInput?.value || '') || 0.3, 0, 1);
+                const alpha = EMA_ALPHA;
                 ema3D = ema(ema3D, mps, alpha);
                 mps = ema3D ?? mps;
               }
